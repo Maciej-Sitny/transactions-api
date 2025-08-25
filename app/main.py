@@ -1,47 +1,56 @@
 from datetime import datetime
 from typing import Optional
-
+from uuid import UUID, uuid4
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field, constr
 
 app = FastAPI()
 
 class Transaction(BaseModel):
-    id: int | None =None
+    id: UUID
     amount: float = Field(..., gt=0, description="The amount of the transaction must be greater than 0")
     currency: str = constr(min_length=3, max_length=3)
     description: str = constr(min_length=3, max_length=100)
-    created_timestamp: datetime = datetime.now()
-    updated_timestamp: datetime | None = None
+    created_timestamp: datetime = Field(default_factory=datetime.now)
+    updated_timestamp: datetime | None = Field(default=None)
+
+    class Config:
+        extra = "forbid"
+
+class TransactionResponse(BaseModel):
+    id: UUID
+    amount: float
+    currency: str
+    description: str
 
 transactions = [
-    Transaction(id=1, amount=100.0, currency="USD", description="Payment for services"),
-    Transaction(id=2, amount=250.5, currency="EUR", description="Invoice payment"),
-    Transaction(id=3, amount=75.0, currency="PLN", description="Refund"),
-    Transaction(id=4, amount=25.0, currency="PLN", description="Refund")
+    Transaction(id=uuid4(), amount=100.0, currency="USD", description="Payment for services"),
+    Transaction(id=uuid4(), amount=250.5, currency="EUR", description="Invoice payment"),
+    Transaction(id=uuid4(), amount=75.0, currency="PLN", description="Refund"),
+    Transaction(id=uuid4(), amount=25.0, currency="PLN", description="Refund")
 ]
 
-@app.get("/transactions")
+@app.get("/transactions", response_model=list[TransactionResponse])
 def show_transactions():
     return transactions
 
-@app.get("/transactions/{id}")
-def show_transaction(id: int):
+@app.get("/transactions/{id}", response_model=TransactionResponse)
+def show_transaction(id: str):
     for transaction in transactions:
-        if transaction.id==id:
+        if transaction.id==UUID(id):
             return transaction
     else:
         raise HTTPException(status_code=404, detail="Transaction not found")
-@app.post("/", status_code=201)
+@app.post("/transactions", status_code=201, response_model=TransactionResponse)
 def create_transaction(transaction: Transaction):
-    transaction.id = len(transactions)+1
+    transaction.id = uuid4()
     transactions.append(transaction)
     return transactions
 
-@app.put("/transactions/{id}")
-def update_transaction(id: int, updated_transaction: Transaction):
+@app.put("/transactions/{id}", response_model=TransactionResponse)
+def update_transaction(id: str, updated_transaction: Transaction):
     for transaction in transactions:
-        if transaction.id==id:
+        if transaction.id==UUID(id):
             transaction.amount = updated_transaction.amount
             transaction.currency = updated_transaction.currency
             transaction.description = updated_transaction.description
@@ -50,10 +59,10 @@ def update_transaction(id: int, updated_transaction: Transaction):
     else:
         raise HTTPException(status_code=404, detail="Transaction not found")
 
-@app.delete("/transactions/{id}", status_code=204)
-def delete_transaction(id: int):
+@app.delete("/transactions/{id}", status_code=204, response_model=TransactionResponse)
+def delete_transaction(id: str):
     for transaction in transactions:
-        if transaction.id==id:
+        if transaction.id==UUID(id):
             transactions.remove(transaction)
             return transaction
     else:
@@ -67,9 +76,9 @@ def show_filter(currency: str):
 @app.get("/sorted")
 def sort_transactions(by: str = "id", order: str = "asc"):
     reverse = order == "desc"
-    return sorted(transactions, key=lambda t: t.amount, reverse=reverse)
+    return sorted(transactions, key=lambda t: getattr(t, by), reverse=reverse)
 
-@app.get("/query")
+@app.get("/query", response_model=list[TransactionResponse])
 def query_transactions(
         currency: Optional[str] = None,
         sort_by: str = "id",
@@ -93,16 +102,25 @@ def query_transactions(
     return results
 
 
-@app.get("/report/summary")
+
+class CurrencySummary(BaseModel):
+    count: int
+    total: float
+
+class ReportSummaryResponse(BaseModel):
+    __root__: dict[str, CurrencySummary]
+
+@app.get("/report/summary", response_model=ReportSummaryResponse)
 def show_report_summary():
 
     currencies= {}
 
     for t in transactions:
         if t.currency in currencies.keys():
-            currencies[t.currency] += t.amount
+            currencies[t.currency]["count"] += 1
+            currencies[t.currency]["total"] += t.amount
         else:
-            currencies[t.currency] = t.amount
+            currencies[t.currency] = {"count": 1, "total": t.amount}
 
     return currencies
 
