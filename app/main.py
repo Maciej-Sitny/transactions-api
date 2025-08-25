@@ -2,17 +2,27 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID, uuid4
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field, constr
+from pydantic import BaseModel, Field, constr, field_validator
+from enum import Enum
 
+class Currency (str, Enum):
+    USD = "USD"
+    GBP = "GBP"
+    JPY = "JPY"
+    PLN = "PLN"
 app = FastAPI()
 
 class Transaction(BaseModel):
     id: UUID
     amount: float = Field(..., gt=0, description="The amount of the transaction must be greater than 0")
-    currency: str = constr(min_length=3, max_length=3)
+    currency: Currency = Field(..., description="The currency of the transaction")
     description: str = constr(min_length=3, max_length=100)
     created_timestamp: datetime = Field(default_factory=datetime.now)
     updated_timestamp: datetime | None = Field(default=None)
+
+    @field_validator("currency", mode="before")
+    def validate_currency(cls, v):
+        return v.upper()
 
     class Config:
         extra = "forbid"
