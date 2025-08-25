@@ -1,16 +1,25 @@
+from datetime import datetime
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, constr
 
-transactions=[]
+app = FastAPI()
 
 class Transaction(BaseModel):
     id: int | None =None
-    amount: float
-    currency: str
-    description: str
-app = FastAPI()
+    amount: float = Field(..., gt=0, description="The amount of the transaction must be greater than 0")
+    currency: str = constr(min_length=3, max_length=3)
+    description: str = constr(min_length=3, max_length=100)
+    created_timestamp: datetime = datetime.now()
+    updated_timestamp: datetime | None = None
+
+transactions = [
+    Transaction(id=1, amount=100.0, currency="USD", description="Payment for services"),
+    Transaction(id=2, amount=250.5, currency="EUR", description="Invoice payment"),
+    Transaction(id=3, amount=75.0, currency="PLN", description="Refund"),
+    Transaction(id=4, amount=25.0, currency="PLN", description="Refund")
+]
 
 @app.get("/transactions")
 def show_transactions():
@@ -23,7 +32,7 @@ def show_transaction(id: int):
             return transaction
     else:
         raise HTTPException(status_code=404, detail="Transaction not found")
-@app.post("/")
+@app.post("/", status_code=201)
 def create_transaction(transaction: Transaction):
     transaction.id = len(transactions)+1
     transactions.append(transaction)
@@ -36,11 +45,12 @@ def update_transaction(id: int, updated_transaction: Transaction):
             transaction.amount = updated_transaction.amount
             transaction.currency = updated_transaction.currency
             transaction.description = updated_transaction.description
+            transaction.updated_timestamp = datetime.now()
             return transaction
     else:
         raise HTTPException(status_code=404, detail="Transaction not found")
 
-@app.delete("/transactions/{id}")
+@app.delete("/transactions/{id}", status_code=204)
 def delete_transaction(id: int):
     for transaction in transactions:
         if transaction.id==id:
@@ -82,4 +92,17 @@ def query_transactions(
 
     return results
 
+
+@app.get("/report/summary")
+def show_report_summary():
+
+    currencies= {}
+
+    for t in transactions:
+        if t.currency in currencies.keys():
+            currencies[t.currency] += t.amount
+        else:
+            currencies[t.currency] = t.amount
+
+    return currencies
 
