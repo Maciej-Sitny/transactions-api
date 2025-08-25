@@ -23,6 +23,12 @@ class TransactionResponse(BaseModel):
     currency: str
     description: str
 
+class PaginatedTransactions(BaseModel):
+    page: int
+    limit: int
+    total: int
+    data: list[TransactionResponse]
+
 transactions = [
     Transaction(id=uuid4(), amount=100.0, currency="USD", description="Payment for services"),
     Transaction(id=uuid4(), amount=250.5, currency="EUR", description="Invoice payment"),
@@ -30,9 +36,35 @@ transactions = [
     Transaction(id=uuid4(), amount=25.0, currency="PLN", description="Refund")
 ]
 
-@app.get("/transactions", response_model=list[TransactionResponse])
-def show_transactions():
-    return transactions
+def pagify(
+        data: list | dict,
+        page: int,
+        limit: int
+):
+    if page < 1 or limit<1:
+        raise HTTPException(status_code=404, detail="Invalid page or limit number")
+
+    start = (page - 1) * limit
+    end = page * limit
+
+    return {
+        "page": page,
+        "limit": limit,
+        "total": len(data),
+        "data": data[start:end],
+    }
+
+
+
+@app.get("/transactions", response_model=PaginatedTransactions)
+def show_transactions(
+        page: int = 1,
+        limit : int = 10,
+):
+
+    result = pagify(transactions, page, limit)
+
+    return result
 
 @app.get("/transactions/{id}", response_model=TransactionResponse)
 def show_transaction(id: str):
@@ -78,11 +110,13 @@ def sort_transactions(by: str = "id", order: str = "asc"):
     reverse = order == "desc"
     return sorted(transactions, key=lambda t: getattr(t, by), reverse=reverse)
 
-@app.get("/query", response_model=list[TransactionResponse])
+@app.get("/query", response_model=PaginatedTransactions)
 def query_transactions(
         currency: Optional[str] = None,
         sort_by: str = "id",
-        order: str = "desc"
+        order: str = "desc",
+        page: int =1,
+        limit: int =10
 ):
     valid_sort_fields = ["id", "amount", "currency"]
     if sort_by not in valid_sort_fields:
@@ -99,7 +133,8 @@ def query_transactions(
     reverse = order == "desc"
     results = sorted(results, key=lambda t: getattr(t, sort_by), reverse=reverse)
 
-    return results
+
+    return pagify(results, page, limit)
 
 
 
