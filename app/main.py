@@ -2,14 +2,21 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID, uuid4
 from fastapi import FastAPI, HTTPException
+from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, Field, constr, field_validator
 from enum import Enum
+from fastapi.responses import JSONResponse
+from fastapi.requests import Request
+
+
 
 class Currency (str, Enum):
     USD = "USD"
     GBP = "GBP"
     JPY = "JPY"
     PLN = "PLN"
+    EUR="EUR"
+    CHF="CHF"
 app = FastAPI()
 
 class Transaction(BaseModel):
@@ -40,11 +47,32 @@ class PaginatedTransactions(BaseModel):
     data: list[TransactionResponse]
 
 transactions = [
-    Transaction(id=uuid4(), amount=100.0, currency="USD", description="Payment for services"),
-    Transaction(id=uuid4(), amount=250.5, currency="EUR", description="Invoice payment"),
-    Transaction(id=uuid4(), amount=75.0, currency="PLN", description="Refund"),
-    Transaction(id=uuid4(), amount=25.0, currency="PLN", description="Refund")
+    Transaction(id=uuid4(), amount=100.0, currency=Currency("USD"), description="Payment for services"),
+    Transaction(id=uuid4(), amount=250.5, currency=Currency("EUR"), description="Invoice payment"),
+    Transaction(id=uuid4(), amount=75.0, currency=Currency("PLN"), description="Refund"),
+    Transaction(id=uuid4(), amount=25.0, currency=Currency("PLN"), description="Refund")
 ]
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "error": exc.detail,
+            "code": exc.status_code
+        },
+    )
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    return JSONResponse(
+        status_code=422,
+        content={
+            "error": "Validation error",
+            "details": exc.errors(),
+            "code": 422
+        },
+    )
 
 def pagify(
         data: list | dict,
