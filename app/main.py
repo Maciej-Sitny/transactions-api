@@ -7,8 +7,10 @@ from pydantic import BaseModel, Field, constr, field_validator
 from enum import Enum
 from fastapi.responses import JSONResponse
 from fastapi.requests import Request
+import logging
 
 
+logging.basicConfig(level=logging.INFO)
 
 class Currency (str, Enum):
     USD = "USD"
@@ -115,6 +117,7 @@ def show_transaction(id: str):
 def create_transaction(transaction: Transaction):
     transaction.id = uuid4()
     transactions.append(transaction)
+    logging.info(f"Created transaction {transaction.id} for {transaction.amount} {transaction.currency}")
     return transactions
 
 @app.put("/transactions/{id}", response_model=TransactionResponse)
@@ -125,8 +128,10 @@ def update_transaction(id: str, updated_transaction: Transaction):
             transaction.currency = updated_transaction.currency
             transaction.description = updated_transaction.description
             transaction.updated_timestamp = datetime.now()
+            logging.info(f"Updated transaction {id}")
             return transaction
     else:
+        logging.error(f"Transaction {id} not found")
         raise HTTPException(status_code=404, detail="Transaction not found")
 
 @app.delete("/transactions/{id}", status_code=204, response_model=TransactionResponse)
@@ -134,8 +139,10 @@ def delete_transaction(id: str):
     for transaction in transactions:
         if transaction.id==UUID(id):
             transactions.remove(transaction)
+            logging.warning(f"Deleted transaction {id}")
             return transaction
     else:
+        logging.error(f"Attempt to delete non-existent transaction of id {id}")
         raise HTTPException(status_code=404, detail="Transaction not found")
 
 @app.get("/filter/{currency}")
