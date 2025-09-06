@@ -7,3 +7,4 @@ pydantic
 python-jose
 passlib[bcrypt]
 pytest
+python-multipart

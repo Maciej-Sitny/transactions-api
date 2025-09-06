@@ -1,14 +1,65 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 from uuid import UUID, uuid4
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
 from fastapi.exceptions import RequestValidationError
-from pydantic import BaseModel, Field, constr, field_validator
+from pydantic import BaseModel, Field, constr, field_validator, RootModel
 from enum import Enum
 from fastapi.responses import JSONResponse
 from fastapi.requests import Request
 import logging
+from jose import JWTError, jwt
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from passlib.context import CryptContext
 
+app = FastAPI()
+
+SECRET_KEY = "supersecretkey123"
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 30
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+
+fake_users_db = {
+    "alice": {
+        "username": "alice",
+        "hashed_password": pwd_context.hash("password123"),
+    }
+}
+
+def authenticate_user(username: str, password: str):
+    user = fake_users_db.get(username)
+    if not user or not pwd_context.verify(password, user["hashed_password"]):
+        return False
+    return user
+
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
+    to_encode = data.copy()
+    if expires_delta:
+        expire = datetime.now() + expires_delta
+        to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+@app.post("/token")
+def login(form_data: OAuth2PasswordRequestForm = Depends()):
+    user = authenticate_user(form_data.username, form_data.password)
+    if not user:
+        raise HTTPException(status_code=401, detail="Incorrect username or password")
+
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(data={"sub":user["username"]}, expires_delta=access_token_expires)
+    return {"access_token": access_token, "token_type": "bearer"}
+
+def get_current_user(token: str = Depends(oauth2_scheme)):
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        return username
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
 
 logging.basicConfig(level=logging.INFO)
 
@@ -19,7 +70,7 @@ class Currency (str, Enum):
     PLN = "PLN"
     EUR="EUR"
     CHF="CHF"
-app = FastAPI()
+
 
 class Transaction(BaseModel):
     id: UUID
@@ -29,18 +80,16 @@ class Transaction(BaseModel):
     created_timestamp: datetime = Field(default_factory=datetime.now)
     updated_timestamp: datetime | None = Field(default=None)
 
-    @field_validator("currency", mode="before")
-    def validate_currency(cls, v):
-        return v.upper()
+    # @field_validator("currency", mode="before")
+    # def validate_currency(cls, v):
+    #     return v.upper()
 
     class Config:
         extra = "forbid"
 
 class TransactionResponse(BaseModel):
-    id: UUID
-    amount: float
-    currency: str
-    description: str
+    user: str
+    transaction: Transaction
 
 class PaginatedTransactions(BaseModel):
     page: int
@@ -49,10 +98,10 @@ class PaginatedTransactions(BaseModel):
     data: list[TransactionResponse]
 
 transactions = [
-    Transaction(id=uuid4(), amount=100.0, currency=Currency("USD"), description="Payment for services"),
-    Transaction(id=uuid4(), amount=250.5, currency=Currency("EUR"), description="Invoice payment"),
-    Transaction(id=uuid4(), amount=75.0, currency=Currency("PLN"), description="Refund"),
-    Transaction(id=uuid4(), amount=25.0, currency=Currency("PLN"), description="Refund")
+    Transaction(id=uuid4(), amount=100.0, currency=Currency("USD"), description="Payment for services", created_timestamp=datetime.now(), updated_timestamp=None),
+    Transaction(id=uuid4(), amount=250.5, currency=Currency("EUR"), description="Invoice payment", created_timestamp=datetime.now(), updated_timestamp=None),
+    Transaction(id=uuid4(), amount=75.0, currency=Currency("PLN"), description="Refund",created_timestamp=datetime.now(), updated_timestamp=None),
+    Transaction(id=uuid4(), amount=25.0, currency=Currency("PLN"), description="Refund", created_timestamp=datetime.now(), updated_timestamp=None)
 ]
 
 @app.exception_handler(HTTPException)
@@ -100,28 +149,29 @@ def pagify(
 def show_transactions(
         page: int = 1,
         limit : int = 10,
+        user: str = Depends(get_current_user)
 ):
 
     result = pagify(transactions, page, limit)
-
+    result["data"] = [{"user": user, "transaction": t} for t in result["data"]]
     return result
 
 @app.get("/transactions/{id}", response_model=TransactionResponse)
-def show_transaction(id: str):
+def show_transaction(id: str, user= Depends(get_current_user)):
     for transaction in transactions:
         if transaction.id==UUID(id):
-            return transaction
+            return {"user": user, "transaction": transaction}
     else:
         raise HTTPException(status_code=404, detail="Transaction not found")
 @app.post("/transactions", status_code=201, response_model=TransactionResponse)
-def create_transaction(transaction: Transaction):
+def create_transaction(transaction: Transaction, user = Depends(get_current_user)):
     transaction.id = uuid4()
     transactions.append(transaction)
     logging.info(f"Created transaction {transaction.id} for {transaction.amount} {transaction.currency}")
-    return transactions
+    return {"user": user, "transaction": transaction}
 
 @app.put("/transactions/{id}", response_model=TransactionResponse)
-def update_transaction(id: str, updated_transaction: Transaction):
+def update_transaction(id: str, updated_transaction: Transaction, user= Depends(get_current_user)):
     for transaction in transactions:
         if transaction.id==UUID(id):
             transaction.amount = updated_transaction.amount
@@ -129,18 +179,18 @@ def update_transaction(id: str, updated_transaction: Transaction):
             transaction.description = updated_transaction.description
             transaction.updated_timestamp = datetime.now()
             logging.info(f"Updated transaction {id}")
-            return transaction
+            return {"user": user, "transaction":transaction}
     else:
         logging.error(f"Transaction {id} not found")
         raise HTTPException(status_code=404, detail="Transaction not found")
 
-@app.delete("/transactions/{id}", status_code=204, response_model=TransactionResponse)
-def delete_transaction(id: str):
+@app.delete("/transactions/{id}", status_code=200, response_model=TransactionResponse)
+def delete_transaction(id: str, user= Depends(get_current_user)):
     for transaction in transactions:
         if transaction.id==UUID(id):
             transactions.remove(transaction)
             logging.warning(f"Deleted transaction {id}")
-            return transaction
+            return { "user": user, "transaction":transaction}
     else:
         logging.error(f"Attempt to delete non-existent transaction of id {id}")
         raise HTTPException(status_code=404, detail="Transaction not found")
@@ -187,8 +237,8 @@ class CurrencySummary(BaseModel):
     count: int
     total: float
 
-class ReportSummaryResponse(BaseModel):
-    __root__: dict[str, CurrencySummary]
+class ReportSummaryResponse(RootModel[dict[str, float]]):
+    pass
 
 @app.get("/report/summary", response_model=ReportSummaryResponse)
 def show_report_summary():
